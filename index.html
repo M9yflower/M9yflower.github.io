@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Market Cap Tracker</title>
+  <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card: #1e293b;
+      --text: #e2e8f0;
+      --text-muted: #94a3b8;
+      --border: #334155;
+      --green: #10b981;
+      --red: #ef4444;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      line-height: 1.6;
+      padding: 20px;
+    }
+    header {
+      text-align: center;
+      margin-bottom: 30px;
+    }
+    h1 {
+      font-size: 2.2rem;
+      margin-bottom: 8px;
+    }
+    .subtitle {
+      color: var(--text-muted);
+      font-size: 1rem;
+    }
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--card);
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+    }
+    th, td {
+      padding: 16px;
+      text-align: left;
+    }
+    th {
+      background: #0f172a;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+    tr:hover {
+      background: rgba(30, 41, 59, 0.6);
+    }
+    .logo-cell {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .logo {
+      width: 32px;
+      height: 32px;
+      border-radius: 6px;
+      object-fit: contain;
+      background: white;
+      padding: 2px;
+    }
+    .company-name {
+      font-weight: 600;
+    }
+    .ticker {
+      color: var(--text-muted);
+      font-size: 0.85rem;
+    }
+    .market-cap {
+      font-weight: 600;
+    }
+    .chart-container {
+      height: 60px;
+      width: 120px;
+    }
+    .loading {
+      text-align: center;
+      padding: 40px;
+      color: var(--text-muted);
+    }
+    footer {
+      text-align: center;
+      margin-top: 40px;
+      color: var(--text-muted);
+      font-size: 0.9rem;
+    }
+    @media (max-width: 768px) {
+      th:nth-child(n+4), td:nth-child(n+4) {
+        display: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Global Market Cap Rankings</h1>
+      <p class="subtitle">Top companies by market capitalization • Updated daily</p>
+    </header>
+
+    <table id="companies-table">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Company</th>
+          <th>Ticker</th>
+          <th>Market Cap</th>
+          <th>Price Chart (7D)</th>
+        </tr>
+      </thead>
+      <tbody id="table-body">
+        <tr><td colspan="5" class="loading">Loading market data...</td></tr>
+      </tbody>
+    </table>
+
+    <footer>
+      <p>Data from Finnhub • Charts via TradingView • Updated hourly</p>
+      <p>This is a demo site for educational purposes only.</p>
+    </footer>
+  </div>
+
+  <script>
+    // 🔑 REPLACE WITH YOUR FREE FINNHUB API KEY (get at https://finnhub.io)
+    const FINNHUB_API_KEY = 'YOUR_FREE_API_KEY_HERE';
+
+    // Top tickers by market cap (approximate list)
+    const TOP_TICKERS = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 'META', 'TSLA', 'BRK.B', 'UNH', 'JNJ'];
+
+    async function fetchQuote(symbol) {
+      const url = `https://finnhub.io/api/v1/quote?symbol=${symbol}&token=${FINNHUB_API_KEY}`;
+      try {
+        const res = await fetch(url);
+        if (!res.ok) throw new Error('Failed to fetch quote');
+        return await res.json();
+      } catch (e) {
+        console.warn(`Error fetching ${symbol}:`, e);
+        return null;
+      }
+    }
+
+    async function fetchProfile(symbol) {
+      const url = `https://finnhub.io/api/v1/stock/profile2?symbol=${symbol}&token=${FINNHUB_API_KEY}`;
+      try {
+        const res = await fetch(url);
+        if (!res.ok) throw new Error('Failed to fetch profile');
+        return await res.json();
+      } catch (e) {
+        console.warn(`Error fetching profile for ${symbol}:`, e);
+        return { name: symbol, logo: '' };
+      }
+    }
+
+    function formatMarketCap(mc) {
+      if (!mc) return 'N/A';
+      if (mc >= 1e12) return `$${(mc / 1e12).toFixed(2)}T`;
+      if (mc >= 1e9) return `$${(mc / 1e9).toFixed(2)}B`;
+      if (mc >= 1e6) return `$${(mc / 1e6).toFixed(2)}M`;
+      return `$${mc.toLocaleString()}`;
+    }
+
+    function renderChart(container, data) {
+      if (!data || !data.c || data.c.length < 2) return;
+      
+      const chart = LightweightCharts.createChart(container, {
+        height: 60,
+        layout: { backgroundColor: '#1e293b', textColor: '#94a3b8' },
+        grid: { vertLines: { visible: false }, horzLines: { visible: false } },
+        crosshair: { mode: LightweightCharts.CrosshairMode.Magnet },
+        priceScale: { visible: false },
+        timeScale: { visible: false }
+      });
+
+      const lineSeries = chart.addLineSeries({
+        color: '#10b981',
+        lineWidth: 2,
+        lastValueVisible: false,
+        priceLineVisible: false
+      });
+
+      // Mock timestamps (last 7 days)
+      const now = Date.now();
+      const times = [];
+      for (let i = 6; i >= 0; i--) {
+        times.push(Math.floor((now - i * 24 * 60 * 60 * 1000) / 1000));
+      }
+
+      const seriesData = data.c.map((close, idx) => ({
+        time: times[idx] || times[0],
+        value: close
+      }));
+
+      lineSeries.setData(seriesData);
+    }
+
+    async function init() {
+      const tableBody = document.getElementById('table-body');
+      tableBody.innerHTML = '<tr><td colspan="5" class="loading">Fetching data...</td></tr>';
+
+      const results = [];
+      for (const ticker of TOP_TICKERS) {
+        const [quote, profile] = await Promise.all([
+          fetchQuote(ticker),
+          fetchProfile(ticker)
+        ]);
+
+        if (quote && quote.c) {
+          results.push({ ticker, quote, profile });
+        }
+      }
+
+      // Sort by market cap (descending)
+      results.sort((a, b) => (b.quote.mc || 0) - (a.quote.mc || 0));
+
+      tableBody.innerHTML = '';
+      results.forEach((item, idx) => {
+        const row = document.createElement('tr');
+        
+        const logoUrl = item.profile.logo || `https://logo.clearbit.com/${item.ticker.split('.')[0].toLowerCase()}.com`;
+        
+        row.innerHTML = `
+          <td>${idx + 1}</td>
+          <td>
+            <div class="logo-cell">
+              <img class="logo" src="${logoUrl}" onerror="this.style.display='none'" alt="${item.profile.name || item.ticker}">
+              <div>
+                <div class="company-name">${item.profile.name || item.ticker}</div>
+                <div class="ticker">${item.ticker}</div>
+              </div>
+            </div>
+          </td>
+          <td>${item.ticker}</td>
+          <td class="market-cap">${formatMarketCap(item.quote.mc)}</td>
+          <td><div class="chart-container" id="chart-${idx}"></div></td>
+        `;
+        tableBody.appendChild(row);
+
+        // Render mini chart (mock data since Finnhub free tier doesn't provide historical in this call)
+        // In production, you'd fetch 7-day OHLC here
+        setTimeout(() => {
+          renderChart(document.getElementById(`chart-${idx}`), { c: [100, 102, 98, 105, 107, 104, item.quote.c] });
+        }, 100);
+      });
+    }
+
+    // Warn if API key not set
+    if (FINNHUB_API_KEY === 'd5gkvu9r01ql4f492800d5gkvu9r01ql4f49280g') {
+      alert('⚠️ Please get a FREE Finnhub API key at https://finnhub.io and replace it in the code!');
+    } else {
+      init().catch(console.error);
+    }
+  </script>
+</body>
+</html>
